@@ -131,6 +131,12 @@ type AWSManagedControlPlaneSpec struct { //nolint: maligned
 	// +optional
 	IAMAuthenticatorConfig *IAMAuthenticatorConfig `json:"iamAuthenticatorConfig,omitempty"`
 
+	// AccessConfig specifies the EKS cluster access configuration.
+	// It defines the authentication mode and whether to bootstrap the cluster creator
+	// as a cluster-admin.
+	// +optional
+	AccessConfig AccessConfig `json:"accessConfig,omitempty"`
+
 	// Endpoints specifies access to this cluster's control plane endpoints
 	// +optional
 	EndpointAccess EndpointAccess `json:"endpointAccess,omitempty"`
@@ -200,7 +206,11 @@ type AWSManagedControlPlaneSpec struct { //nolint: maligned
 	// bare EKS cluster without EKS default networking addons
 	// If you set this value to false when creating a cluster, the default networking add-ons will not be installed
 	// +kubebuilder:default=true
-	BootstrapSelfManagedAddons bool `json:"bootstrapSelfManagedAddons,omitempty"`
+	BootstrapSelfManagedAddons *bool `json:"bootstrapSelfManagedAddons,omitempty"`
+
+	// AutoMode is the EKS Auto Mode.
+	// +optional
+	AutoMode *AutoMode `json:"autoMode,omitempty"`
 
 	// RestrictPrivateSubnets indicates that the EKS control plane should only use private subnets.
 	// +kubebuilder:default=false
@@ -219,6 +229,36 @@ type KubeProxy struct {
 	// set this to true if you are using the Amazon kube-proxy addon.
 	// +kubebuilder:default=false
 	Disable bool `json:"disable,omitempty"`
+}
+
+// AccessConfig is the access configuration for the cluster.
+type AccessConfig struct {
+	// AuthenticationMode mode controls how Kubernetes API authentication is performed:
+	//   - CONFIG_MAP — uses only the aws-auth ConfigMap (legacy mode).
+	//   - API — uses only EKS Access Entries (aws-auth is ignored).
+	//   - API_AND_CONFIG_MAP — enables both Access Entries and aws-auth.
+	AuthenticationMode *string `json:"authenticationMode,omitempty"`
+
+	// BootstrapAdminPermissions specifies whether or not the cluster creator IAM principal was set as a cluster
+	// admin access entry during cluster creation time.
+	BootstrapAdminPermissions *bool `json:"bootstrapAdminPermissions,omitempty"`
+}
+
+type AutoMode struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Compute capability configuration for EKS Auto Mode.
+	// +optional
+	Compute Compute `json:"compute,omitempty"`
+}
+
+type Compute struct {
+	NodePools []string `json:"nodePools,omitempty"`
+	// NodeRoleArn the ARN of the IAM Role EKS will assign to EC2 Managed Instances in your EKS
+	// Auto Mode cluster. This value cannot be changed after the compute capability of
+	// EKS Auto Mode is enabled. For more information, see the IAM Reference in the
+	// Amazon EKS User Guide.
+	// +optional
+	NodeRoleArn *string `json:"nodeRoleArn,omitempty"`
 }
 
 // VpcCni specifies configuration related to the VPC CNI.

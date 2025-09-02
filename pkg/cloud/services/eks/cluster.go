@@ -297,7 +297,18 @@ func makeEksEncryptionConfigs(encryptionConfig *ekscontrolplanev1.EncryptionConf
 	})
 }
 
-func makeKubernetesNetworkConfig(serviceCidrs *clusterv1.NetworkRanges) (*ekstypes.KubernetesNetworkConfigRequest, error) {
+func makeKubernetesNetworkConfig(serviceCidrs *clusterv1.NetworkRanges, isIPv6Enabled, isAutoModeEnabled bool) (*ekstypes.KubernetesNetworkConfigRequest, error) {
+	netConfig := new(ekstypes.KubernetesNetworkConfigRequest)
+
+	if isAutoModeEnabled {
+		netConfig.ElasticLoadBalancing = &ekstypes.ElasticLoadBalancing{Enabled: aws.Bool(isAutoModeEnabled)}
+	}
+
+	if isIPv6Enabled {
+		netConfig.IpFamily = ekstypes.IpFamilyIpv6
+		return netConfig, nil
+	}
+
 	if serviceCidrs == nil || len(serviceCidrs.CIDRBlocks) == 0 {
 		return nil, nil
 	}
@@ -311,9 +322,9 @@ func makeKubernetesNetworkConfig(serviceCidrs *clusterv1.NetworkRanges) (*ekstyp
 		return nil, nil
 	}
 
-	return &ekstypes.KubernetesNetworkConfigRequest{
-		ServiceIpv4Cidr: &ipv4cidrs[0],
-	}, nil
+	netConfig.ServiceIpv4Cidr = &ipv4cidrs[0]
+
+	return netConfig, nil
 }
 
 func makeVpcConfig(subnets infrav1.Subnets, endpointAccess ekscontrolplanev1.EndpointAccess, securityGroups map[infrav1.SecurityGroupRole]infrav1.SecurityGroup) (*ekstypes.VpcConfigRequest, error) {
@@ -422,16 +433,9 @@ func (s *Service) createCluster(ctx context.Context, eksClusterName string) (*ek
 		return nil, errors.Wrap(err, "couldn't create vpc config for cluster")
 	}
 
-	var netConfig *ekstypes.KubernetesNetworkConfigRequest
-	if s.scope.VPC().IsIPv6Enabled() {
-		netConfig = &ekstypes.KubernetesNetworkConfigRequest{
-			IpFamily: ekstypes.IpFamilyIpv6,
-		}
-	} else {
-		netConfig, err = makeKubernetesNetworkConfig(s.scope.ServiceCidrs())
-		if err != nil {
-			return nil, errors.Wrap(err, "couldn't create Kubernetes network config for cluster")
-		}
+	netConfig, err := makeKubernetesNetworkConfig(s.scope.ServiceCidrs(), s.scope.VPC().IsIPv6Enabled(), s.scope.IsAutoModeEnabled())
+	if err != nil {
+		return nil, errors.Wrap(err, "couldn't create Kubernetes network config for cluster")
 	}
 
 	// Make sure to use the MachineScope here to get the merger of AWSCluster and AWSMachine tags
@@ -471,6 +475,21 @@ func (s *Service) createCluster(ctx context.Context, eksClusterName string) (*ek
 		Tags:                       tags,
 		KubernetesNetworkConfig:    netConfig,
 		BootstrapSelfManagedAddons: bootstrapAddon,
+		AccessConfig: &ekstypes.CreateAccessConfigRequest{
+			AuthenticationMode:                      ekstypes.AuthenticationMode(*s.scope.ControlPlane.Spec.AccessConfig.AuthenticationMode),
+			BootstrapClusterCreatorAdminPermissions: s.scope.ControlPlane.Spec.AccessConfig.BootstrapAdminPermissions,
+		},
+	}
+
+	// Enable EKS Auto Mode compute capability enabled.
+	if s.scope.IsAutoModeEnabled() {
+		input.ComputeConfig = &ekstypes.ComputeConfigRequest{Enabled: aws.Bool(true)}
+
+		// nodePools could be not set, that's ok.
+		if len(s.scope.ControlPlane.Spec.AutoMode.Compute.NodePools) > 0 {
+			input.ComputeConfig.NodePools = s.scope.ControlPlane.Spec.AutoMode.Compute.NodePools
+			input.ComputeConfig.NodeRoleArn = s.scope.ControlPlane.Spec.AutoMode.Compute.NodeRoleArn
+		}
 	}
 
 	var out *eks.CreateClusterOutput
